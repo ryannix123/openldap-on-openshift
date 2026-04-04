@@ -38,7 +38,12 @@ jobs:
         id: version
         run: |
           VERSION=$(docker run --rm --pull always quay.io/centos/centos:stream10 \
-            bash -c "dnf info openldap-servers 2>/dev/null | awk '/^Version/{print \$3}' | head -1")
+            bash -c "dnf info openldap-servers 2>/dev/null | awk '/^Version[[:space:]]*:/{print \$3; exit}'")
+          # Fallback: use date-based tag if dnf query fails
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date -u +%Y%m%d)
+            echo "WARNING: Could not detect openldap-servers version, using date tag: ${VERSION}"
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Detected openldap-servers version: ${VERSION}"
 
