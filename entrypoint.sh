@@ -100,7 +100,6 @@ directory       ${LDAP_DATA_DIR}
 index   objectClass     eq,pres
 index   ou,cn,mail,surname,givenname eq,pres,sub
 index   uid             eq,pres,sub
-index   memberOf        eq
 
 access to attrs=userPassword
     by self write
