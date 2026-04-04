@@ -1,6 +1,26 @@
 # openldap-on-openshift
 
-A self-contained LDAPS authentication service for OpenShift namespaces, built on CentOS Stream 10. Deploy one instance per namespace so applications never authenticate to a service running outside the cluster.
+<p align="center">
+  <img src="https://upload.wikimedia.org/wikipedia/en/c/c7/OpenLDAP-logo.png" alt="OpenLDAP" width="220">
+</p>
+
+<p align="center">
+  <a href="https://github.com/ryannix123/openldap-on-openshift/actions/workflows/build.yaml">
+    <img src="https://img.shields.io/github/actions/workflow/status/ryannix123/openldap-on-openshift/build.yaml?branch=main&label=build&logo=github" alt="Build">
+  </a>
+  <a href="https://quay.io/repository/ryan_nix/openldap-openshift">
+    <img src="https://img.shields.io/badge/quay.io-ryan__nix%2Fopenldap--openshift-1f6feb?logo=redhat" alt="Quay.io">
+  </a>
+  <img src="https://img.shields.io/badge/OpenLDAP-2.6-4b8bbe" alt="OpenLDAP 2.6">
+  <img src="https://img.shields.io/badge/base-Ubuntu%2024.04%20LTS-E95420?logo=ubuntu&logoColor=white" alt="Ubuntu 24.04 LTS">
+  <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-6e7681" alt="Multi-arch">
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License">
+  </a>
+</p>
+
+
+A self-contained LDAPS authentication service for OpenShift namespaces, built on Ubuntu 24.04 LTS. Deploy one instance per namespace so applications never authenticate to a service running outside the cluster.
 
 ## Architecture
 
@@ -144,25 +164,3 @@ uidNumber: 10001
 gidNumber: 10001
 homeDirectory: /home/jdoe
 userPassword: $(oc exec deployment/openldap -- slappasswd -s 'initial-password')
-EOF
-```
-
-## Environment variables reference
-
-| Variable | Default | Description |
-|---|---|---|
-| `LDAP_BASE_DN` | `dc=example,dc=com` | Root suffix for the directory |
-| `LDAP_ORG` | `Example Organization` | `o` attribute on the root entry |
-| `LDAP_ADMIN_PASSWORD` | *(from Secret)* | Admin bind DN password |
-| `LDAP_READONLY_PASSWORD` | *(from Secret)* | Read-only bind DN password |
-| `LDAP_LOG_LEVEL` | `256` | slapd log verbosity (0=off, 256=stats, -1=all) |
-
-## Image
-
-`quay.io/ryan_nix/openldap-openshift:latest`
-
-Built weekly from CentOS Stream 10 + current `openldap-servers` package. Multi-arch: `linux/amd64` and `linux/arm64`.
-
-## License
-
-Apache-2.0
