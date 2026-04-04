@@ -125,7 +125,7 @@ CONF
   # Phase 2 — bootstrap directory data
   # -------------------------------------------------------------------------
   log "Loading base directory data..."
-  "$SLAPADD" -n 1 -F "$SLAPD_CONFIG_DIR" <<DATA
+  "$SLAPADD" -b "${LDAP_BASE_DN}" -F "$SLAPD_CONFIG_DIR" <<DATA
 dn: ${LDAP_BASE_DN}
 objectClass: top
 objectClass: dcObject
