@@ -69,8 +69,6 @@ include         ${LDAP_SCHEMA_DIR}/cosine.schema
 include         ${LDAP_SCHEMA_DIR}/inetorgperson.schema
 include         ${LDAP_SCHEMA_DIR}/nis.schema
 
-pidfile         ${LDAP_RUN_DIR}/slapd.pid
-argsfile        ${LDAP_RUN_DIR}/slapd.args
 loglevel        ${LDAP_LOG_LEVEL}
 
 TLSCertificateFile      ${LDAP_CERTS_DIR}/tls.crt
@@ -166,5 +164,8 @@ fi
 # ---------------------------------------------------------------------------
 # Start slapd in the foreground (PID 1)
 # ---------------------------------------------------------------------------
+# Remove stale pid/args files that persist across CrashLoopBackOff restarts
+rm -f "${LDAP_RUN_DIR}/slapd.pid" "${LDAP_RUN_DIR}/slapd.args"
+
 log "Starting slapd — URIs: ${LDAP_URIS}"
 exec "$SLAPD" -d "${LDAP_LOG_LEVEL}" -f "$SLAPD_CONF" -h "${LDAP_URIS}"
