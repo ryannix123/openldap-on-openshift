@@ -67,6 +67,8 @@ if [ ! -f "$INITIALIZED_FLAG" ]; then
   SLAPD_CONF=$(mktemp /tmp/slapd.XXXXXX.conf)
   trap 'rm -f "$SLAPD_CONF"' EXIT
 
+  mkdir -p "$LDAP_DATA_DIR"
+
   # Locate the mdb backend module — path varies by arch on Ubuntu
   MODULE_PATH=$(find /usr/lib -name "back_mdb.so" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
   if [ -z "$MODULE_PATH" ]; then
@@ -104,13 +106,11 @@ index   uid             eq,pres,sub
 access to attrs=userPassword
     by self write
     by anonymous auth
-    by dn.exact="cn=admin,${LDAP_BASE_DN}" write
     by * none
 access to attrs=shadowLastChange
     by self write
     by * read
 access to *
-    by dn.exact="cn=admin,${LDAP_BASE_DN}" write
     by dn.exact="cn=readonly,${LDAP_BASE_DN}" read
     by self read
     by * none
