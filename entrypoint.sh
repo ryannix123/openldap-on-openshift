@@ -1,22 +1,20 @@
 #!/bin/bash
 # entrypoint.sh — idempotent bootstrap for OpenLDAP on OpenShift
-# Uses LTB project OpenLDAP 2.6 package paths (/usr/local/openldap/)
+# Ubuntu 24.04 standard paths (/etc/ldap/, /var/lib/ldap/)
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# LTB package path prefix
+# Paths (Ubuntu/Debian standard OpenLDAP layout)
 # ---------------------------------------------------------------------------
-OPENLDAP_PREFIX="${OPENLDAP_PREFIX:-/usr/local/openldap}"
+SLAPD="/usr/sbin/slapd"
+SLAPADD="/usr/sbin/slapadd"
+SLAPPASSWD="/usr/sbin/slappasswd"
 
-SLAPD="${OPENLDAP_PREFIX}/libexec/slapd"
-SLAPADD="${OPENLDAP_PREFIX}/sbin/slapadd"
-SLAPPASSWD="${OPENLDAP_PREFIX}/sbin/slappasswd"
-
-SLAPD_CONFIG_DIR="${OPENLDAP_PREFIX}/etc/openldap/slapd.d"
-LDAP_DATA_DIR="${OPENLDAP_PREFIX}/var/openldap-data"
-LDAP_RUN_DIR="${OPENLDAP_PREFIX}/var/run"
-LDAP_SCHEMA_DIR="${OPENLDAP_PREFIX}/etc/openldap/schema"
-LDAP_CERTS_DIR="/etc/openldap/certs"
+SLAPD_CONFIG_DIR="/etc/ldap/slapd.d"
+LDAP_DATA_DIR="/var/lib/ldap"
+LDAP_RUN_DIR="/run/slapd"
+LDAP_SCHEMA_DIR="/etc/ldap/schema"
+LDAP_CERTS_DIR="/etc/ldap/certs"
 
 # ---------------------------------------------------------------------------
 # Configuration — all overridable via environment variables in the Deployment
@@ -70,8 +68,8 @@ objectClass: olcGlobal
 cn: config
 olcArgsFile: ${LDAP_RUN_DIR}/slapd.args
 olcPidFile: ${LDAP_RUN_DIR}/slapd.pid
-olcTLSCertificateFile: /etc/openldap/certs/tls.crt
-olcTLSCertificateKeyFile: /etc/openldap/certs/tls.key
+olcTLSCertificateFile: /etc/ldap/certs/tls.crt
+olcTLSCertificateKeyFile: /etc/ldap/certs/tls.key
 olcLogLevel: ${LDAP_LOG_LEVEL}
 
 dn: cn=schema,cn=config

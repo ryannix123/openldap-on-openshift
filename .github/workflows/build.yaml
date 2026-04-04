@@ -2,7 +2,7 @@ name: Build and Push OpenLDAP Image
 
 on:
   schedule:
-    # Weekly Sunday at 06:00 UTC — picks up updated CentOS Stream 10 base + openldap-ltb
+    # Weekly Sunday at 06:00 UTC — picks up updated Ubuntu 24.04 base + slapd package
     - cron: '0 6 * * 0'
   push:
     branches: [main]
@@ -34,23 +34,17 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Detect OpenLDAP version from LTB repo
+      - name: Detect slapd version from upstream
         id: version
         run: |
-          VERSION=$(docker run --rm --pull always quay.io/centos/centos:stream10 bash -c '
-            curl -fsSL https://ltb-project.org/lib/RPM-GPG-KEY-LTB-project \
-              -o /etc/pki/rpm-gpg/RPM-GPG-KEY-LTB-project 2>/dev/null
-            printf "[ltb-project]\nname=LTB project packages\nbaseurl=https://ltb-project.org/rpm/openldap26/\$releasever/\$basearch\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-LTB-project\n" \
-              > /etc/yum.repos.d/ltb-project.repo
-            dnf info openldap-ltb 2>/dev/null | awk "/^Version[[:space:]]*:/{print \$3; exit}"
-          ')
-          # Fallback: use date-based tag if dnf query fails
+          VERSION=$(docker run --rm --pull always ubuntu:24.04 bash -c \
+            "apt-get update -qq && apt-cache show slapd 2>/dev/null | awk '/^Version:/{print \$2; exit}' | cut -d+ -f1")
           if [ -z "$VERSION" ]; then
             VERSION=$(date -u +%Y%m%d)
-            echo "WARNING: Could not detect openldap-ltb version, using date tag: ${VERSION}"
+            echo "WARNING: Could not detect slapd version, using date tag: ${VERSION}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Detected openldap-ltb version: ${VERSION}"
+          echo "Detected slapd version: ${VERSION}"
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v5
