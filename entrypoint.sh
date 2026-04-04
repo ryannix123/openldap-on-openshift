@@ -67,7 +67,18 @@ if [ ! -f "$INITIALIZED_FLAG" ]; then
   SLAPD_CONF=$(mktemp /tmp/slapd.XXXXXX.conf)
   trap 'rm -f "$SLAPD_CONF"' EXIT
 
+  # Locate the mdb backend module — path varies by arch on Ubuntu
+  MODULE_PATH=$(find /usr/lib -name "back_mdb.so" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+  if [ -z "$MODULE_PATH" ]; then
+    log "ERROR: Could not locate back_mdb.so — is slapd installed correctly?"
+    exit 1
+  fi
+  log "Found mdb module at: ${MODULE_PATH}"
+
   cat > "$SLAPD_CONF" <<CONF
+modulepath      ${MODULE_PATH}
+moduleload      back_mdb
+
 include         ${LDAP_SCHEMA_DIR}/core.schema
 include         ${LDAP_SCHEMA_DIR}/cosine.schema
 include         ${LDAP_SCHEMA_DIR}/inetorgperson.schema
