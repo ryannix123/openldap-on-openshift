@@ -1,7 +1,7 @@
 #!/bin/bash
 # entrypoint.sh — idempotent bootstrap for OpenLDAP on OpenShift
-# Uses slapd.conf + slaptest for OLC generation — avoids Ubuntu slapadd
-# attribute-type-undefined issues with backend-specific OLC attributes.
+# Runs slapd directly from slapd.conf — no OLC/slaptest conversion needed
+# for a static in-namespace auth service.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -10,13 +10,14 @@ set -euo pipefail
 SLAPD="/usr/sbin/slapd"
 SLAPADD="/usr/sbin/slapadd"
 SLAPPASSWD="/usr/sbin/slappasswd"
-SLAPTEST="/usr/sbin/slaptest"
 
-SLAPD_CONFIG_DIR="/etc/ldap/slapd.d"
 LDAP_DATA_DIR="/var/lib/ldap"
 LDAP_RUN_DIR="/run/slapd"
 LDAP_SCHEMA_DIR="/etc/ldap/schema"
 LDAP_CERTS_DIR="/etc/ldap/certs"
+
+# Generated each start from env vars — lives in tmpfs, never committed to PVC
+SLAPD_CONF="${LDAP_RUN_DIR}/slapd.conf"
 
 # ---------------------------------------------------------------------------
 # Configuration — all overridable via environment variables in the Deployment
@@ -44,30 +45,22 @@ dc_value() {
 mkdir -p "$LDAP_RUN_DIR" "$LDAP_DATA_DIR"
 
 # ---------------------------------------------------------------------------
-# Bootstrap — runs only once per PVC lifetime
+# Locate the mdb backend module (path varies by arch on Ubuntu)
 # ---------------------------------------------------------------------------
-if [ ! -f "$INITIALIZED_FLAG" ]; then
-  log "First run — bootstrapping OpenLDAP (base DN: ${LDAP_BASE_DN})"
+MODULE_PATH=$(find /usr/lib -name "back_mdb.so" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+if [ -z "$MODULE_PATH" ]; then
+  log "ERROR: Could not locate back_mdb.so — is slapd installed correctly?"
+  exit 1
+fi
+log "Found mdb module at: ${MODULE_PATH}"
 
-  ADMIN_PW_HASH=$("$SLAPPASSWD" -s "$LDAP_ADMIN_PASSWORD")
-  READONLY_PW_HASH=$("$SLAPPASSWD" -s "$LDAP_READONLY_PASSWORD")
-  DC_VALUE=$(dc_value)
+# ---------------------------------------------------------------------------
+# Generate slapd.conf on every start from current env vars
+# ---------------------------------------------------------------------------
+ADMIN_PW_HASH=$("$SLAPPASSWD" -s "$LDAP_ADMIN_PASSWORD")
+READONLY_PW_HASH=$("$SLAPPASSWD" -s "$LDAP_READONLY_PASSWORD")
 
-  rm -rf "${SLAPD_CONFIG_DIR:?}"/*
-
-  # Locate the mdb backend module — path varies by arch on Ubuntu
-  MODULE_PATH=$(find /usr/lib -name "back_mdb.so" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-  if [ -z "$MODULE_PATH" ]; then
-    log "ERROR: Could not locate back_mdb.so — is slapd installed correctly?"
-    exit 1
-  fi
-  log "Found mdb module at: ${MODULE_PATH}"
-
-  # Keep conf file alive through both slaptest and slapadd — remove at end
-  SLAPD_CONF=$(mktemp /tmp/slapd.XXXXXX.conf)
-  trap 'rm -f "$SLAPD_CONF"' EXIT
-
-  cat > "$SLAPD_CONF" <<CONF
+cat > "$SLAPD_CONF" <<CONF
 modulepath      ${MODULE_PATH}
 moduleload      back_mdb
 
@@ -106,19 +99,14 @@ access to *
     by * none
 CONF
 
-  # -------------------------------------------------------------------------
-  # Phase 1 — convert slapd.conf to OLC format
-  # -u skips database open so slaptest doesn't fail on the empty data dir
-  # -------------------------------------------------------------------------
-  log "Converting slapd.conf to OLC format..."
-  "$SLAPTEST" -u -f "$SLAPD_CONF" -F "$SLAPD_CONFIG_DIR"
+# ---------------------------------------------------------------------------
+# Bootstrap — runs only once per PVC lifetime
+# ---------------------------------------------------------------------------
+if [ ! -f "$INITIALIZED_FLAG" ]; then
+  log "First run — bootstrapping directory (base DN: ${LDAP_BASE_DN})"
 
-  # -------------------------------------------------------------------------
-  # Phase 2 — load base directory data
-  # Use -f (conf file) not -F (OLC dir) so slapadd initialises the mdb
-  # database itself from scratch in the data directory.
-  # -------------------------------------------------------------------------
-  log "Loading base directory data..."
+  DC_VALUE=$(dc_value)
+
   "$SLAPADD" -f "$SLAPD_CONF" <<DATA
 dn: ${LDAP_BASE_DN}
 objectClass: top
@@ -155,12 +143,8 @@ description: Group memberships
 
 DATA
 
-  rm -f "$SLAPD_CONF"
-  trap - EXIT
-
   touch "$INITIALIZED_FLAG"
   log "Bootstrap complete."
-
 else
   log "Database already initialized — skipping bootstrap."
 fi
@@ -183,4 +167,4 @@ fi
 # Start slapd in the foreground (PID 1)
 # ---------------------------------------------------------------------------
 log "Starting slapd — URIs: ${LDAP_URIS}"
-exec "$SLAPD" -d "${LDAP_LOG_LEVEL}" -F "$SLAPD_CONFIG_DIR" -h "${LDAP_URIS}"
+exec "$SLAPD" -d "${LDAP_LOG_LEVEL}" -f "$SLAPD_CONF" -h "${LDAP_URIS}"

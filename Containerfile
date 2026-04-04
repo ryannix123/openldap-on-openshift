@@ -17,16 +17,15 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Remove package post-install defaults so the entrypoint bootstraps cleanly
-RUN rm -rf /etc/ldap/slapd.d/* /var/lib/ldap/*
+RUN rm -rf /var/lib/ldap/*
 
 # OpenShift assigns an arbitrary UID at runtime; all writable dirs must be
 # group-owned by GID 0 (root) with group-write so any UID:0 combo works.
 RUN mkdir -p /var/lib/ldap \
-             /etc/ldap/slapd.d \
              /etc/ldap/certs \
              /run/slapd && \
-    chown -R 1001:0 /var/lib/ldap /etc/ldap/slapd.d /run/slapd && \
-    chmod -R g=u    /var/lib/ldap /etc/ldap/slapd.d /run/slapd && \
+    chown -R 1001:0 /var/lib/ldap /run/slapd && \
+    chmod -R g=u    /var/lib/ldap /run/slapd && \
     # certs dir is read-only (mounted Secret) — no group-write needed
     chown 1001:0 /etc/ldap/certs && \
     chmod 750    /etc/ldap/certs
