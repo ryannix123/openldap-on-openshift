@@ -46,26 +46,53 @@ TLS is handled entirely by the OpenShift [service serving certificate](https://d
 | `ou=users,<base>` | Person accounts |
 | `ou=groups,<base>` | Group memberships |
 
-## Quick start
+## Deployment
 
-### 1. Set passwords (never commit real values)
+### Prerequisites
+
+```bash
+pip install kubernetes
+ansible-galaxy collection install kubernetes.core
+```
+
+Ensure you are logged in to your OpenShift cluster before running the playbook:
+
+```bash
+oc login --token=<token> --server=<api-url>
+```
+
+### Run the playbook
+
+```bash
+ansible-playbook deploy.yml
+```
+
+The playbook prompts for five values, then handles everything in the correct order — namespace, secret, Service (required first for TLS cert injection), PVC, ConfigMap, and Deployment. It waits for the cert controller to issue the TLS secret and for the pod to become ready before printing the connection summary.
+
+```
+OpenShift namespace [openldap]:
+LDAP base DN [dc=example,dc=com]:
+Organization name [Example Organization]:
+Admin bind DN password:
+Read-only bind DN password:
+```
+
+### Manual deployment
+
+If you prefer `oc` directly:
 
 ```bash
 oc create secret generic openldap-admin \
   --from-literal=admin-password='<strong-password>' \
   --from-literal=readonly-password='<strong-password>'
-```
 
-### 2. Deploy
-
-```bash
-# Apply the Service first — the cert controller needs it to generate the TLS secret
+# Service must be created first for TLS cert injection
 oc apply -f manifests/service.yaml
-# Wait a moment, then apply everything else
 oc apply -k manifests/
 ```
 
-### 3. Verify
+
+### Verify
 
 ```bash
 # Wait for the pod to be Ready

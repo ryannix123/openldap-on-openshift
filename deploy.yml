@@ -1,0 +1,246 @@
+---
+- name: Deploy OpenLDAP on OpenShift
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_prompt:
+    - name: ocp_namespace
+      prompt: "OpenShift namespace"
+      default: "openldap"
+      private: false
+
+    - name: ldap_base_dn
+      prompt: "LDAP base DN"
+      default: "dc=example,dc=com"
+      private: false
+
+    - name: ldap_org
+      prompt: "Organization name"
+      default: "Example Organization"
+      private: false
+
+    - name: admin_password
+      prompt: "Admin bind DN password"
+      private: true
+      confirm: true
+
+    - name: readonly_password
+      prompt: "Read-only bind DN password"
+      private: true
+      confirm: true
+
+  tasks:
+    - name: Ensure namespace exists
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ ocp_namespace }}"
+
+    - name: Create admin credentials secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: openldap-admin
+            namespace: "{{ ocp_namespace }}"
+            labels:
+              app: openldap
+          type: Opaque
+          stringData:
+            admin-password: "{{ admin_password }}"
+            readonly-password: "{{ readonly_password }}"
+
+    # Service must exist before the Deployment so the OpenShift cert controller
+    # can inject the openldap-tls Secret before slapd starts.
+    - name: Create Service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: openldap
+            namespace: "{{ ocp_namespace }}"
+            labels:
+              app: openldap
+            annotations:
+              service.beta.openshift.io/serving-cert-secret-name: openldap-tls
+          spec:
+            selector:
+              app: openldap
+            ports:
+              - name: ldap
+                port: 389
+                targetPort: 1389
+                protocol: TCP
+              - name: ldaps
+                port: 636
+                targetPort: 1636
+                protocol: TCP
+            type: ClusterIP
+
+    - name: Wait for OpenShift cert controller to inject TLS secret
+      kubernetes.core.k8s_info:
+        kind: Secret
+        name: openldap-tls
+        namespace: "{{ ocp_namespace }}"
+      register: tls_secret_check
+      until: tls_secret_check.resources | length > 0
+      retries: 12
+      delay: 5
+
+    - name: Create storage PVC
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: openldap-storage
+            namespace: "{{ ocp_namespace }}"
+            labels:
+              app: openldap
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+
+    - name: Create CA bundle ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: openldap-ca-bundle
+            namespace: "{{ ocp_namespace }}"
+            labels:
+              app: openldap
+            annotations:
+              service.beta.openshift.io/inject-cabundle: "true"
+
+    - name: Deploy OpenLDAP
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: openldap
+            namespace: "{{ ocp_namespace }}"
+            labels:
+              app: openldap
+          spec:
+            replicas: 1
+            # Recreate: only one slapd writer against the mdb PVC at a time
+            strategy:
+              type: Recreate
+            selector:
+              matchLabels:
+                app: openldap
+            template:
+              metadata:
+                labels:
+                  app: openldap
+              spec:
+                containers:
+                  - name: slapd
+                    image: quay.io/ryan_nix/openldap-openshift:latest
+                    imagePullPolicy: Always
+                    ports:
+                      - name: ldap
+                        containerPort: 1389
+                        protocol: TCP
+                      - name: ldaps
+                        containerPort: 1636
+                        protocol: TCP
+                    env:
+                      - name: LDAP_BASE_DN
+                        value: "{{ ldap_base_dn }}"
+                      - name: LDAP_ORG
+                        value: "{{ ldap_org }}"
+                      - name: LDAP_LOG_LEVEL
+                        value: "256"
+                      - name: LDAP_ADMIN_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: openldap-admin
+                            key: admin-password
+                      - name: LDAP_READONLY_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: openldap-admin
+                            key: readonly-password
+                    volumeMounts:
+                      - name: storage
+                        mountPath: /var/lib/ldap
+                        subPath: data
+                      - name: storage
+                        mountPath: /etc/ldap/slapd.d
+                        subPath: config
+                      - name: tls
+                        mountPath: /etc/ldap/certs
+                        readOnly: true
+                    readinessProbe:
+                      tcpSocket:
+                        port: 1389
+                      initialDelaySeconds: 10
+                      periodSeconds: 10
+                      failureThreshold: 3
+                    livenessProbe:
+                      tcpSocket:
+                        port: 1389
+                      initialDelaySeconds: 30
+                      periodSeconds: 30
+                      failureThreshold: 3
+                    resources:
+                      requests:
+                        cpu: 100m
+                        memory: 256Mi
+                      limits:
+                        cpu: 500m
+                        memory: 512Mi
+                volumes:
+                  - name: storage
+                    persistentVolumeClaim:
+                      claimName: openldap-storage
+                  - name: tls
+                    secret:
+                      secretName: openldap-tls
+                      optional: true
+                      defaultMode: 0440
+
+    - name: Wait for rollout to complete
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        name: openldap
+        namespace: "{{ ocp_namespace }}"
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 120
+
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " OpenLDAP deployed successfully"
+          - "================================================"
+          - " Namespace:        {{ ocp_namespace }}"
+          - " Base DN:          {{ ldap_base_dn }}"
+          - " Admin DN:         cn=admin,{{ ldap_base_dn }}"
+          - " Readonly DN:      cn=readonly,{{ ldap_base_dn }}"
+          - " LDAP  (in-ns):    ldap://openldap:389"
+          - " LDAPS (in-ns):    ldaps://openldap:636"
+          - " LDAPS (cross-ns): ldaps://openldap.{{ ocp_namespace }}.svc.cluster.local:636"
+          - " CA bundle:        ConfigMap/openldap-ca-bundle → service-ca.crt"
+          - "================================================"
