@@ -5,8 +5,6 @@
   gather_facts: false
 
   vars:
-    # Use the same Python interpreter that ansible-playbook itself is running
-    # under, avoiding mismatches with Homebrew or system Python installations.
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
   vars_prompt:
@@ -31,7 +29,7 @@
       confirm: true
 
   tasks:
-    - name: Get current OpenShift namespace from oc context
+    - name: Get current OpenShift namespace
       ansible.builtin.command: oc project -q
       register: oc_project
       changed_when: false
@@ -60,34 +58,13 @@
             admin-password: "{{ admin_password }}"
             readonly-password: "{{ readonly_password }}"
 
-    # Service must exist before the Deployment so the OpenShift cert controller
+    # Service must exist before Deployment so the cert controller
     # can inject the openldap-tls Secret before slapd starts.
-    - name: Create Service
+    - name: Apply Service
       kubernetes.core.k8s:
         state: present
-        definition:
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: openldap
-            namespace: "{{ ocp_namespace }}"
-            labels:
-              app: openldap
-            annotations:
-              service.beta.openshift.io/serving-cert-secret-name: openldap-tls
-          spec:
-            selector:
-              app: openldap
-            ports:
-              - name: ldap
-                port: 389
-                targetPort: 1389
-                protocol: TCP
-              - name: ldaps
-                port: 636
-                targetPort: 1636
-                protocol: TCP
-            type: ClusterIP
+        namespace: "{{ ocp_namespace }}"
+        src: manifests/service.yaml
 
     - name: Wait for OpenShift cert controller to inject TLS secret
       kubernetes.core.k8s_info:
@@ -99,130 +76,33 @@
       retries: 12
       delay: 5
 
-    - name: Create storage PVC
+    - name: Apply PVC, ConfigMap, and Deployment
       kubernetes.core.k8s:
         state: present
-        definition:
-          apiVersion: v1
-          kind: PersistentVolumeClaim
-          metadata:
-            name: openldap-storage
-            namespace: "{{ ocp_namespace }}"
-            labels:
-              app: openldap
-          spec:
-            accessModes:
-              - ReadWriteOnce
-            resources:
-              requests:
-                storage: 1Gi
+        namespace: "{{ ocp_namespace }}"
+        src: "{{ item }}"
+      loop:
+        - manifests/pvc.yaml
+        - manifests/configmap-cabundle.yaml
+        - manifests/deployment.yaml
 
-    - name: Create CA bundle ConfigMap
+    - name: Set LDAP base DN and org in Deployment
       kubernetes.core.k8s:
-        state: present
+        state: patched
+        kind: Deployment
+        name: openldap
+        namespace: "{{ ocp_namespace }}"
         definition:
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: openldap-ca-bundle
-            namespace: "{{ ocp_namespace }}"
-            labels:
-              app: openldap
-            annotations:
-              service.beta.openshift.io/inject-cabundle: "true"
-
-    - name: Deploy OpenLDAP
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: openldap
-            namespace: "{{ ocp_namespace }}"
-            labels:
-              app: openldap
           spec:
-            replicas: 1
-            # Recreate: only one slapd writer against the mdb PVC at a time
-            strategy:
-              type: Recreate
-            selector:
-              matchLabels:
-                app: openldap
             template:
-              metadata:
-                labels:
-                  app: openldap
               spec:
-                securityContext:
-                  fsGroup: 0
                 containers:
                   - name: slapd
-                    image: quay.io/ryan_nix/openldap-openshift:latest
-                    imagePullPolicy: Always
-                    ports:
-                      - name: ldap
-                        containerPort: 1389
-                        protocol: TCP
-                      - name: ldaps
-                        containerPort: 1636
-                        protocol: TCP
                     env:
                       - name: LDAP_BASE_DN
                         value: "{{ ldap_base_dn }}"
                       - name: LDAP_ORG
                         value: "{{ ldap_org }}"
-                      - name: LDAP_LOG_LEVEL
-                        value: "0"
-                      - name: LDAP_ADMIN_PASSWORD
-                        valueFrom:
-                          secretKeyRef:
-                            name: openldap-admin
-                            key: admin-password
-                      - name: LDAP_READONLY_PASSWORD
-                        valueFrom:
-                          secretKeyRef:
-                            name: openldap-admin
-                            key: readonly-password
-                    volumeMounts:
-                      - name: storage
-                        mountPath: /var/lib/ldap
-                        subPath: data
-                      - name: storage
-                        mountPath: /etc/ldap/slapd.d
-                        subPath: config
-                      - name: tls
-                        mountPath: /etc/ldap/certs
-                        readOnly: true
-                    readinessProbe:
-                      tcpSocket:
-                        port: 1389
-                      initialDelaySeconds: 10
-                      periodSeconds: 10
-                      failureThreshold: 3
-                    livenessProbe:
-                      tcpSocket:
-                        port: 1389
-                      initialDelaySeconds: 30
-                      periodSeconds: 30
-                      failureThreshold: 3
-                    resources:
-                      requests:
-                        cpu: 100m
-                        memory: 256Mi
-                      limits:
-                        cpu: 500m
-                        memory: 512Mi
-                volumes:
-                  - name: storage
-                    persistentVolumeClaim:
-                      claimName: openldap-storage
-                  - name: tls
-                    secret:
-                      secretName: openldap-tls
-                      optional: true
-                      defaultMode: 0440
 
     - name: Wait for rollout to complete
       kubernetes.core.k8s_info:

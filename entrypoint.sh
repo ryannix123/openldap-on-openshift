@@ -184,9 +184,14 @@ log "Certs directory: ${LDAP_CERTS_DIR}"
 ls -lan "$LDAP_CERTS_DIR" 2>&1 | while IFS= read -r line; do log "  $line"; done
 
 # ---------------------------------------------------------------------------
-# Start slapd in the foreground (PID 1)
+# Start slapd — wrapped to capture exit code for debugging
 # ---------------------------------------------------------------------------
 rm -f "${LDAP_RUN_DIR}/slapd.pid" "${LDAP_RUN_DIR}/slapd.args"
 
 log "Starting slapd — URIs: ${LDAP_URIS}"
-exec "$SLAPD" -d "${LDAP_LOG_LEVEL}" -f "$SLAPD_CONF" -h "${LDAP_URIS}"
+"$SLAPD" -d "${LDAP_LOG_LEVEL}" -f "$SLAPD_CONF" -h "${LDAP_URIS}" || true
+SLAPD_EXIT=$?
+log "slapd exited with code: ${SLAPD_EXIT}"
+log "Sleeping 300s — exec into pod to debug:"
+log "  oc exec deployment/openldap -- /bin/bash"
+sleep 300
