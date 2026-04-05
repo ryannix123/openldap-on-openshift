@@ -80,20 +80,11 @@
         - manifests/route.yaml
 
     - name: Patch LDAP base DN into Deployment
-      kubernetes.core.k8s:
-        state: patched
-        kind: Deployment
-        name: lldap
-        namespace: "{{ ocp_namespace }}"
-        definition:
-          spec:
-            template:
-              spec:
-                containers:
-                  - name: lldap
-                    env:
-                      - name: LLDAP_LDAP_BASE_DN
-                        value: "{{ ldap_base_dn }}"
+      ansible.builtin.command: >
+        oc set env deployment/lldap
+        LLDAP_LDAP_BASE_DN={{ ldap_base_dn }}
+        -n {{ ocp_namespace }}
+      changed_when: true
 
     - name: Wait for rollout
       kubernetes.core.k8s_info:

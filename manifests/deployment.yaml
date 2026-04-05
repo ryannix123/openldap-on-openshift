@@ -16,8 +16,6 @@ spec:
       labels:
         app: lldap
     spec:
-      securityContext:
-        fsGroup: 0
       containers:
         - name: lldap
           image: quay.io/ryan_nix/lldap-openshift:latest
