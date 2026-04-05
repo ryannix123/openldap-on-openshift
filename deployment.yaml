@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lldap
+  labels:
+    app: lldap
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: lldap
+  template:
+    metadata:
+      labels:
+        app: lldap
+    spec:
+      securityContext:
+        fsGroup: 0
+      containers:
+        - name: lldap
+          image: quay.io/ryan_nix/lldap-openshift:latest
+          imagePullPolicy: Always
+          ports:
+            - name: ldap
+              containerPort: 3890
+            - name: ldaps
+              containerPort: 6360
+            - name: web
+              containerPort: 17170
+
+          env:
+            - name: LLDAP_LDAP_BASE_DN
+              value: "dc=example,dc=com"
+            - name: LLDAP_DATABASE_URL
+              value: "sqlite:///data/users.db?mode=rwc"
+            - name: LLDAP_LDAP_PORT
+              value: "3890"
+            - name: LLDAP_HTTP_PORT
+              value: "17170"
+
+            # LDAPS via OpenShift service serving certificate
+            - name: LLDAP_LDAPS_OPTIONS__ENABLED
+              value: "true"
+            - name: LLDAP_LDAPS_OPTIONS__PORT
+              value: "6360"
+            - name: LLDAP_LDAPS_OPTIONS__CERT_FILE
+              value: "/etc/lldap/certs/tls.crt"
+            - name: LLDAP_LDAPS_OPTIONS__KEY_FILE
+              value: "/etc/lldap/certs/tls.key"
+
+            - name: LLDAP_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: lldap-secret
+                  key: jwt-secret
+            - name: LLDAP_LDAP_USER_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: lldap-secret
+                  key: admin-password
+
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tls
+              mountPath: /etc/lldap/certs
+              readOnly: true
+
+          readinessProbe:
+            tcpSocket:
+              port: 3890
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            tcpSocket:
+              port: 3890
+            initialDelaySeconds: 15
+            periodSeconds: 30
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: lldap-data
+        - name: tls
+          secret:
+            secretName: lldap-tls
+            optional: true
+            defaultMode: 0440

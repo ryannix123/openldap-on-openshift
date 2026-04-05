@@ -1,8 +1,8 @@
-name: Build and Push OpenLDAP Image
+name: Build and Push lldap Image
 
 on:
   schedule:
-    # Weekly Sunday at 06:00 UTC — picks up updated Ubuntu 24.04 base + slapd package
+    # Weekly Sunday at 06:00 UTC
     - cron: '0 6 * * 0'
   push:
     branches: [main]
@@ -21,7 +21,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (ARM emulation)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -34,17 +34,17 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Detect slapd version from upstream
+      - name: Detect lldap version from upstream
         id: version
         run: |
-          VERSION=$(docker run --rm --pull always ubuntu:24.04 bash -c \
-            "apt-get update -qq && apt-cache show slapd 2>/dev/null | awk '/^Version:/{print \$2; exit}' | cut -d+ -f1")
+          VERSION=$(docker run --rm --pull always docker.io/lldap/lldap:stable \
+            /app/lldap --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           if [ -z "$VERSION" ]; then
             VERSION=$(date -u +%Y%m%d)
-            echo "WARNING: Could not detect slapd version, using date tag: ${VERSION}"
+            echo "WARNING: Could not detect lldap version, using date tag: ${VERSION}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Detected slapd version: ${VERSION}"
+          echo "Detected lldap version: ${VERSION}"
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v5
@@ -54,11 +54,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            quay.io/ryan_nix/openldap-openshift:latest
-            quay.io/ryan_nix/openldap-openshift:${{ steps.version.outputs.version }}
+            quay.io/ryan_nix/lldap-openshift:latest
+            quay.io/ryan_nix/lldap-openshift:${{ steps.version.outputs.version }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
 
       - name: Image digest
-        run: echo "Pushed quay.io/ryan_nix/openldap-openshift:${{ steps.version.outputs.version }}"
+        run: echo "Pushed quay.io/ryan_nix/lldap-openshift:${{ steps.version.outputs.version }}"

@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: lldap-web
+  labels:
+    app: lldap
+spec:
+  to:
+    kind: Service
+    name: lldap
+  port:
+    targetPort: web
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

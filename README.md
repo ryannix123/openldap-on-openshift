@@ -1,50 +1,50 @@
-# openldap-on-openshift
+# lldap-on-openshift
 
 <p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/en/c/c7/OpenLDAP-logo.png" alt="OpenLDAP" width="220">
+  <img src="https://raw.githubusercontent.com/lldap/lldap/main/art/logo.png" alt="lldap" width="200">
 </p>
 
 <p align="center">
-  <a href="https://github.com/ryannix123/openldap-on-openshift/actions/workflows/build.yaml">
-    <img src="https://img.shields.io/github/actions/workflow/status/ryannix123/openldap-on-openshift/build.yaml?branch=main&label=build&logo=github" alt="Build">
+  <a href="https://github.com/ryannix123/lldap-on-openshift/actions/workflows/build.yaml">
+    <img src="https://img.shields.io/github/actions/workflow/status/ryannix123/lldap-on-openshift/build.yaml?branch=main&label=build&logo=github" alt="Build">
   </a>
-  <a href="https://quay.io/repository/ryan_nix/openldap-openshift">
-    <img src="https://img.shields.io/badge/quay.io-ryan__nix%2Fopenldap--openshift-1f6feb?logo=redhat" alt="Quay.io">
+  <a href="https://quay.io/repository/ryan_nix/lldap-openshift">
+    <img src="https://img.shields.io/badge/quay.io-ryan__nix%2Flldap--openshift-1f6feb?logo=redhat" alt="Quay.io">
   </a>
-  <img src="https://img.shields.io/badge/OpenLDAP-2.6-4b8bbe" alt="OpenLDAP 2.6">
-  <img src="https://img.shields.io/badge/base-Ubuntu%2024.04%20LTS-E95420?logo=ubuntu&logoColor=white" alt="Ubuntu 24.04 LTS">
+  <img src="https://img.shields.io/badge/base-lldap%3Astable-4b8bbe" alt="lldap stable">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-6e7681" alt="Multi-arch">
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License">
   </a>
 </p>
 
+> **Lightweight LDAP authentication that never leaves the cluster.**
 
-A self-contained LDAPS authentication service for OpenShift namespaces, built on Ubuntu 24.04 LTS. Deploy one instance per namespace so applications never authenticate to a service running outside the cluster.
+[lldap](https://github.com/lldap/lldap) is a Rust-based lightweight LDAP server optimised for authentication use cases. It runs with ~20MB RAM, stores users in a single SQLite file, and includes a built-in web UI for user and group management — no `ldapadd` commands required.
 
 ## Architecture
 
 ```
 Namespace
-├── Deployment/openldap (slapd on ports 1389/1636)
-├── Service/openldap    (ClusterIP: 389/636 → 1389/1636)
-│     └── annotation: service.beta.openshift.io/serving-cert-secret-name: openldap-tls
-├── Secret/openldap-tls          (auto-injected by OpenShift cert controller)
-├── Secret/openldap-admin        (admin + readonly passwords)
-├── PVC/openldap-storage         (mdb data + OLC config via subPaths)
-└── ConfigMap/openldap-ca-bundle (service CA injected for client use)
+├── Deployment/lldap
+│     ├── LDAP  :3890  (ClusterIP — in-cluster auth)
+│     ├── LDAPS :6360  (ClusterIP — TLS via OpenShift service cert)
+│     └── Web   :17170 (Route — admin UI)
+├── Service/lldap         (ClusterIP)
+├── Route/lldap-web       (HTTPS edge termination)
+├── Secret/lldap-secret   (jwt-secret + admin-password)
+├── Secret/lldap-tls      (auto-injected by OpenShift cert controller)
+├── ConfigMap/lldap-ca-bundle (cluster CA for client apps)
+└── PVC/lldap-data        (SQLite database — 256Mi)
 ```
 
-TLS is handled entirely by the OpenShift [service serving certificate](https://docs.openshift.com/container-platform/latest/security/certificates/service-serving-certificate.html) mechanism. No cert-manager, no self-signed certs, no manual PKI. The cluster CA is already trusted by all pods in the cluster.
-
-## Directory structure
+## Directory layout
 
 | DN | Purpose |
 |---|---|
-| `cn=admin,<base>` | Full admin bind — use for provisioning only |
-| `cn=readonly,<base>` | Read-only service account — use for app authentication |
-| `ou=users,<base>` | Person accounts |
-| `ou=groups,<base>` | Group memberships |
+| `uid=admin,ou=people,<base>` | Admin account — web UI and LDAP bind |
+| `ou=people,<base>` | User accounts |
+| `ou=groups,<base>` | Groups |
 
 ## Deployment
 
@@ -53,11 +53,6 @@ TLS is handled entirely by the OpenShift [service serving certificate](https://d
 ```bash
 pip install kubernetes
 ansible-galaxy collection install kubernetes.core
-```
-
-Ensure you are logged in to your OpenShift cluster before running the playbook:
-
-```bash
 oc login --token=<token> --server=<api-url>
 ```
 
@@ -67,86 +62,40 @@ oc login --token=<token> --server=<api-url>
 ansible-playbook -i localhost, deploy.yml
 ```
 
-The playbook reads your current namespace from `oc project` automatically. It prompts for four values, then handles everything in the correct order — namespace, secret, Service (required first for TLS cert injection), PVC, ConfigMap, and Deployment. It waits for the cert controller to issue the TLS secret and for the pod to become ready before printing the connection summary.
-
 ```
 LDAP base DN [dc=example,dc=com]:
-Organization name [Example Organization]:
-Admin bind DN password:
-Read-only bind DN password:
+JWT secret (long random string):
+lldap admin password:
 ```
+
+The playbook creates the secret, applies the Service first (for TLS cert injection), waits for the cert controller, then deploys everything else and prints the web UI URL.
 
 ### Manual deployment
 
-If you prefer `oc` directly:
-
 ```bash
-oc create secret generic openldap-admin \
-  --from-literal=admin-password='<strong-password>' \
-  --from-literal=readonly-password='<strong-password>'
+oc create secret generic lldap-secret \
+  --from-literal=jwt-secret='<long-random-string>' \
+  --from-literal=admin-password='<strong-password>'
 
-# Service must be created first for TLS cert injection
 oc apply -f manifests/service.yaml
 oc apply -k manifests/
 ```
 
+## Connecting applications
 
-### Verify
+| Setting | Value |
+|---|---|
+| LDAP URL | `ldap://lldap:3890` |
+| LDAPS URL | `ldaps://lldap:6360` |
+| Bind DN | `uid=admin,ou=people,dc=example,dc=com` |
+| Users base DN | `ou=people,dc=example,dc=com` |
+| Groups base DN | `ou=groups,dc=example,dc=com` |
+| User filter | `(&(objectClass=person)(uid={login}))` |
+| CA cert (from ConfigMap) | `/etc/ldap/ca/service-ca.crt` |
 
-```bash
-# Wait for the pod to be Ready
-oc rollout status deployment/openldap
-
-# Test plain LDAP from inside the cluster (exec into any pod)
-ldapsearch -x -H ldap://openldap:389 \
-  -D "cn=readonly,dc=example,dc=com" \
-  -w '<readonly-password>' \
-  -b "ou=users,dc=example,dc=com"
-
-# Test LDAPS using the injected CA bundle
-ldapsearch -x -H ldaps://openldap:636 \
-  -D "cn=readonly,dc=example,dc=com" \
-  -w '<readonly-password>' \
-  -b "ou=users,dc=example,dc=com" \
-  -o TLS_CACERT=/etc/ldap/ca/service-ca.crt
-```
-
-## Customizing the base DN per project
-
-Override `LDAP_BASE_DN` and `LDAP_ORG` in the Deployment env block before the first deploy (changes only take effect on a fresh PVC):
+Mount the `lldap-ca-bundle` ConfigMap into application pods for LDAPS verification:
 
 ```yaml
-env:
-  - name: LDAP_BASE_DN
-    value: "dc=myapp,dc=internal"
-  - name: LDAP_ORG
-    value: "My Application"
-```
-
-Using Kustomize overlays per project:
-
-```yaml
-# overlays/myapp/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-bases:
-  - ../../manifests
-patches:
-  - patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/env/0/value
-        value: "dc=myapp,dc=internal"
-    target:
-      kind: Deployment
-      name: openldap
-```
-
-## Configuring client applications to use LDAPS
-
-Mount the `openldap-ca-bundle` ConfigMap into your application pod:
-
-```yaml
-# In your application Deployment
 volumeMounts:
   - name: ldap-ca
     mountPath: /etc/ldap/ca
@@ -154,39 +103,15 @@ volumeMounts:
 volumes:
   - name: ldap-ca
     configMap:
-      name: openldap-ca-bundle
+      name: lldap-ca-bundle
 ```
 
-Then set the CA cert path in your application's LDAP configuration:
+## Image
 
-| Framework / App | Setting |
-|---|---|
-| Generic ldapsearch | `LDAPTLS_CACERT=/etc/ldap/ca/service-ca.crt` |
-| Python `ldap3` | `Tls(ca_certs_file='/etc/ldap/ca/service-ca.crt')` |
-| Java / JNDI | `javax.net.ssl.trustStore` pointing to a JKS with the CA |
-| Keycloak | `Connection URL: ldaps://openldap:636`, upload CA under LDAP provider |
-| Gitea | `LDAP_TLS_VERIFY=true`, point CA to the mounted file |
+`quay.io/ryan_nix/lldap-openshift:latest`
 
-Connection URL pattern (same namespace): `ldaps://openldap:636`
-Connection URL pattern (cross-namespace): `ldaps://openldap.<namespace>.svc.cluster.local:636`
+Built weekly from `lldap:stable`. Multi-arch: `linux/amd64` and `linux/arm64`.
 
-## Adding users
+## License
 
-```bash
-# Exec into the pod and use ldapadd
-oc exec deployment/openldap -- ldapadd \
-  -x -H ldap://localhost:1389 \
-  -D "cn=admin,dc=example,dc=com" \
-  -w "$ADMIN_PASSWORD" <<EOF
-dn: uid=jdoe,ou=users,dc=example,dc=com
-objectClass: top
-objectClass: inetOrgPerson
-objectClass: posixAccount
-cn: Jane Doe
-sn: Doe
-uid: jdoe
-mail: jdoe@example.com
-uidNumber: 10001
-gidNumber: 10001
-homeDirectory: /home/jdoe
-userPassword: $(oc exec deployment/openldap -- slappasswd -s 'initial-password')
+Apache-2.0 — Ryan Nix <ryan.nix@gmail.com>

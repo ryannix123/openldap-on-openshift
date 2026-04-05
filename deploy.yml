@@ -1,5 +1,5 @@
 ---
-- name: Deploy OpenLDAP on OpenShift
+- name: Deploy lldap on OpenShift
   hosts: localhost
   connection: local
   gather_facts: false
@@ -13,18 +13,13 @@
       default: "dc=example,dc=com"
       private: false
 
-    - name: ldap_org
-      prompt: "Organization name"
-      default: "Example Organization"
-      private: false
-
-    - name: admin_password
-      prompt: "Admin bind DN password"
+    - name: jwt_secret
+      prompt: "JWT secret (long random string)"
       private: true
       confirm: true
 
-    - name: readonly_password
-      prompt: "Read-only bind DN password"
+    - name: admin_password
+      prompt: "lldap admin password"
       private: true
       confirm: true
 
@@ -42,25 +37,23 @@
       ansible.builtin.debug:
         msg: "Deploying into namespace: {{ ocp_namespace }}"
 
-    - name: Create admin credentials secret
+    - name: Create lldap secret
       kubernetes.core.k8s:
         state: present
         definition:
           apiVersion: v1
           kind: Secret
           metadata:
-            name: openldap-admin
+            name: lldap-secret
             namespace: "{{ ocp_namespace }}"
             labels:
-              app: openldap
+              app: lldap
           type: Opaque
           stringData:
+            jwt-secret: "{{ jwt_secret }}"
             admin-password: "{{ admin_password }}"
-            readonly-password: "{{ readonly_password }}"
 
-    # Service must exist before Deployment so the cert controller
-    # can inject the openldap-tls Secret before slapd starts.
-    - name: Apply Service
+    - name: Apply Service (required before Deployment for TLS cert injection)
       kubernetes.core.k8s:
         state: present
         namespace: "{{ ocp_namespace }}"
@@ -69,45 +62,43 @@
     - name: Wait for OpenShift cert controller to inject TLS secret
       kubernetes.core.k8s_info:
         kind: Secret
-        name: openldap-tls
+        name: lldap-tls
         namespace: "{{ ocp_namespace }}"
       register: tls_secret_check
       until: tls_secret_check.resources | length > 0
       retries: 12
       delay: 5
 
-    - name: Apply PVC, ConfigMap, and Deployment
+    - name: Apply PVC, Deployment, and Route
       kubernetes.core.k8s:
         state: present
         namespace: "{{ ocp_namespace }}"
         src: "{{ item }}"
       loop:
         - manifests/pvc.yaml
-        - manifests/configmap-cabundle.yaml
         - manifests/deployment.yaml
+        - manifests/route.yaml
 
-    - name: Set LDAP base DN and org in Deployment
+    - name: Patch LDAP base DN into Deployment
       kubernetes.core.k8s:
         state: patched
         kind: Deployment
-        name: openldap
+        name: lldap
         namespace: "{{ ocp_namespace }}"
         definition:
           spec:
             template:
               spec:
                 containers:
-                  - name: slapd
+                  - name: lldap
                     env:
-                      - name: LDAP_BASE_DN
+                      - name: LLDAP_LDAP_BASE_DN
                         value: "{{ ldap_base_dn }}"
-                      - name: LDAP_ORG
-                        value: "{{ ldap_org }}"
 
-    - name: Wait for rollout to complete
+    - name: Wait for rollout
       kubernetes.core.k8s_info:
         kind: Deployment
-        name: openldap
+        name: lldap
         namespace: "{{ ocp_namespace }}"
         wait: true
         wait_condition:
@@ -115,18 +106,23 @@
           status: "True"
         wait_timeout: 120
 
+    - name: Get web UI route
+      kubernetes.core.k8s_info:
+        kind: Route
+        name: lldap-web
+        namespace: "{{ ocp_namespace }}"
+      register: lldap_route
+
     - name: Deployment summary
       ansible.builtin.debug:
         msg:
           - "================================================"
-          - " OpenLDAP deployed successfully"
+          - " lldap deployed successfully"
           - "================================================"
           - " Namespace:        {{ ocp_namespace }}"
           - " Base DN:          {{ ldap_base_dn }}"
-          - " Admin DN:         cn=admin,{{ ldap_base_dn }}"
-          - " Readonly DN:      cn=readonly,{{ ldap_base_dn }}"
-          - " LDAP  (in-ns):    ldap://openldap:389"
-          - " LDAPS (in-ns):    ldaps://openldap:636"
-          - " LDAPS (cross-ns): ldaps://openldap.{{ ocp_namespace }}.svc.cluster.local:636"
-          - " CA bundle:        ConfigMap/openldap-ca-bundle → service-ca.crt"
+          - " Admin DN:         uid=admin,ou=people,{{ ldap_base_dn }}"
+          - " LDAP  (in-ns):    ldap://lldap:3890"
+          - " LDAPS (in-ns):    ldaps://lldap:6360"
+          - " Web UI:           https://{{ lldap_route.resources[0].spec.host }}"
           - "================================================"
