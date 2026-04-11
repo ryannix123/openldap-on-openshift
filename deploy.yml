@@ -28,7 +28,31 @@
     - name: Remove all lldap resources
       when: deploy_action == "delete"
       block:
-        - name: Delete Deployment, Service, Route, ConfigMap, Secrets, and PVC
+        # Step 1 — delete the Deployment first so pods stop before the PVC is released
+        - name: Delete Deployment
+          kubernetes.core.k8s:
+            state: absent
+            namespace: "{{ ocp_namespace }}"
+            definition:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: lldap
+
+        # Step 2 — wait for all lldap pods to terminate before touching the PVC
+        - name: Wait for lldap pods to terminate
+          kubernetes.core.k8s_info:
+            kind: Pod
+            namespace: "{{ ocp_namespace }}"
+            label_selectors:
+              - app=lldap
+          register: lldap_pods
+          until: lldap_pods.resources | length == 0
+          retries: 24
+          delay: 5
+
+        # Step 3 — delete remaining resources including the PVC
+        - name: Delete Service, Route, ConfigMap, Secrets, and PVC
           kubernetes.core.k8s:
             state: absent
             namespace: "{{ ocp_namespace }}"
@@ -38,13 +62,23 @@
               metadata:
                 name: "{{ item.name }}"
           loop:
-            - { api: apps/v1,                    kind: Deployment,            name: lldap }
-            - { api: v1,                          kind: Service,               name: lldap }
-            - { api: route.openshift.io/v1,       kind: Route,                 name: lldap-web }
-            - { api: v1,                          kind: ConfigMap,             name: lldap-ca-bundle }
-            - { api: v1,                          kind: Secret,                name: lldap-secret }
-            - { api: v1,                          kind: Secret,                name: lldap-tls }
-            - { api: v1,                          kind: PersistentVolumeClaim, name: lldap-data }
+            - { api: v1,                    kind: Service,               name: lldap }
+            - { api: route.openshift.io/v1, kind: Route,                 name: lldap-web }
+            - { api: v1,                    kind: ConfigMap,             name: lldap-ca-bundle }
+            - { api: v1,                    kind: Secret,                name: lldap-secret }
+            - { api: v1,                    kind: Secret,                name: lldap-tls }
+            - { api: v1,                    kind: PersistentVolumeClaim, name: lldap-data }
+
+        # Step 4 — wait for the PVC to fully release before returning
+        - name: Wait for PVC to terminate
+          kubernetes.core.k8s_info:
+            kind: PersistentVolumeClaim
+            name: lldap-data
+            namespace: "{{ ocp_namespace }}"
+          register: lldap_pvc
+          until: lldap_pvc.resources | length == 0
+          retries: 24
+          delay: 5
 
         - name: Cleanup summary
           ansible.builtin.debug:
